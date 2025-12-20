@@ -1,10 +1,27 @@
 import asyncio
 import time
+import aiohttp
+import os
 from typing import List, Tuple, Dict, Any
+from dataclasses import dataclass
+from dotenv import load_dotenv
+
+load_dotenv()
 
 MAX_CONCURRENT_REQUESTS = 15 
 NUM_TOP_POSTS = 10 
 NUM_COMMENTS_PER_POST = 5
+
+@dataclass
+class SubmissionData:
+    """Data class to store parsed Reddit submission information."""
+    submission_id: str
+    upvote_ratio: float
+    score: int
+    created_utc: int
+    num_comments: int
+    author: str
+    subreddit: str
 
 async def simulate_api_call(request_description: str) -> Dict[str, Any]:
     """A placeholder for a single, distinct network request, returning a simulated JSON response."""
@@ -35,26 +52,94 @@ async def simulate_api_call(request_description: str) -> Dict[str, Any]:
     
     return {"error": "Unknown request type"}
 
+# --- Fetch Data ---
+
+async def make_api_call(url: str, session: aiohttp.ClientSession, params: dict = None):
+    """
+    Performs the actual GET request using the shared session.
+    """
+    # Reddit usually requires a unique User-Agent to avoid 429 (Too Many Requests)
+    headers = {"User-Agent": f"MyStockScraper/1.0 {os.getenv("EMAIL")}"}
+    
+    try:
+        # The 'await' happens here - yielding control while waiting for Reddit
+        async with session.get(url, headers=headers, params=params) as response:
+            
+            # Check for Rate Limits (429) or Errors
+            if response.status == 429:
+                print(f"⚠️ Rate limited on {url}. Sleeping for 60s...")
+                await asyncio.sleep(60)
+                # Retry recursively (risky without a counter, but simple for example)
+                return await make_api_call(url, session, params)
+
+            response.raise_for_status() # Raise error for 404, 500, etc.
+            
+            # Return the JSON data directly
+            return await response.json()
+            
+    except Exception as e:
+        print(f"❌ Error fetching {url}: {e}")
+        return None
+
 # --- JSON PARSING FUNCTIONS (ASYNC as they deal with network results, but mostly CPU-bound) ---
 
 async def parse_json_for_post_ids(raw_json: Dict[str, Any]) -> List[str]:
     """Parses the JSON response from the top 10 list API call."""
-    # Add error handling and type checking here (e.g., checking for raw_json['kind'] == 'Listing')
-    post_ids = raw_json.get("data", [])
+    # Navigate through the Reddit JSON structure: data -> children -> data -> id
+    post_ids = []
+    
+    try:
+        children = raw_json.get("data", {}).get("children", [])
+        for child in children:
+            post_id = child.get("data", {}).get("id")
+            if post_id:
+                post_ids.append(post_id)
+    except (KeyError, TypeError) as e:
+        print(f"❌ Error parsing post IDs: {e}")
+    
     print(f"  💡 Parsed {len(post_ids)} post IDs from listing JSON.")
+    print(post_ids)
     return post_ids
 
-async def parse_json_for_post_content(raw_json: Dict[str, Any]) -> Tuple[str, List[str]]:
-    """Parses the JSON response for a single post, returning text and comment IDs."""
+async def parse_json_for_post_content(raw_json: Dict[str, Any]) -> Tuple[SubmissionData, str, List[str]]:
+    """Parses the JSON response for a single post, returning SubmissionData, post text, and comment IDs."""
     
-    # Extract the main text content (title + body) for ticker extraction
-    post_text = f"{raw_json.get('title', '')} {raw_json.get('text', '')}"
-    
-    # Extract the IDs needed for the next concurrent block
-    comment_ids = raw_json.get("top_comment_ids", [])
-    
-    print(f"  💡 Parsed Post JSON: Extracted text and {len(comment_ids)} comment IDs.")
-    return post_text, comment_ids
+    try:
+        # Navigate Reddit's JSON structure: data -> children -> data -> (content and metadata)
+        post_data = raw_json.get("data", raw_json)
+        
+        # Extract the main text content (title + body) for ticker extraction
+        post_text_and_title = f"{post_data.get('title', '')} {post_data.get('selftext', '')}"
+        
+        # Extract the IDs needed for the next concurrent block
+        comment_ids = post_data.get("top_comment_ids", [])
+        
+        # Extract metadata from the post
+        submission_data = SubmissionData(
+            submission_id=post_data.get("id", ""),
+            upvote_ratio=post_data.get("upvote_ratio", 0.0),
+            score=post_data.get("score", 0),
+            created_utc=post_data.get("created_utc", 0),
+            num_comments=post_data.get("num_comments", 0),
+            author=post_data.get("author", "Unknown"),
+            subreddit=post_data.get("subreddit", "Unknown")
+        )
+        
+        print(f"  💡 Parsed Post JSON: {submission_data.author} | Score: {submission_data.score} | Upvote Ratio: {submission_data.upvote_ratio:.2%} | {len(comment_ids)} comment IDs.")
+        return submission_data, post_text_and_title, comment_ids
+        
+    except (KeyError, TypeError) as e:
+        print(f"❌ Error parsing post content: {e}")
+        # Return empty SubmissionData on error
+        return SubmissionData(
+            submission_id="",
+            upvote_ratio=0.0,
+            score=0,
+            created_utc=0,
+            num_comments=0,
+            author="Error",
+            subreddit="Error"
+        ), "", []
 
 async def parse_json_for_comment_thread(raw_json: Dict[str, Any]) -> str:
     """Parses the JSON response for a single comment thread, returning a single string of all relevant text."""
@@ -81,3 +166,31 @@ def process_text(text_content: str, source_description: str) -> List[str]:
     return [simulated_ticker]
 
 # --- CORE ASYNCHRONOUS WORKFLOW FUNCTIONS ---
+
+async def main():
+    """Test function for make_api_call and parse_json_for_post_ids"""
+    print("🧪 Testing make_api_call and parse_json_for_post_ids...\n")
+    
+    # Create a session for the test
+    async with aiohttp.ClientSession() as session:
+        # Test 1: Fetch JSON from Reddit
+        print("Test 1: Fetching JSON from Reddit")
+        url = "https://www.reddit.com/r/ValueInvesting/top.json?limit=10&t=week"
+        result = await make_api_call(url, session)
+        if result:
+            print(f"✅ Success! Retrieved data from Reddit\n")
+            
+            # Test 2: Parse the JSON for post IDs
+            print("Test 2: Parsing JSON for post IDs")
+            post_ids = await parse_json_for_post_ids(result)
+            if post_ids:
+                print(f"✅ Successfully parsed {len(post_ids)} post IDs")
+                print(f"Post IDs: {post_ids}\n")
+            else:
+                print("❌ Failed to parse post IDs\n")
+        else:
+            print("❌ Failed to fetch data\n")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+

@@ -1,5 +1,6 @@
 import asyncio
 import time
+import aiohttp
 from typing import List, Tuple
 from utils import (
     parse_json_for_post_ids,
@@ -7,6 +8,9 @@ from utils import (
     parse_json_for_comment_thread,
     process_text,
     simulate_api_call,
+)
+from validator import (
+  SECTickerValidator
 )
 
 # --- CONCURRENCY PARAMETERS ---
@@ -54,6 +58,12 @@ async def fetch_post_data_and_comment_ids(post_id: int, semaphore: asyncio.Semap
 
 
 async def main():
+    # 1. Initialize Validator
+    validator = SECTickerValidator()
+
+    # 2. Load Data (The "One-Time" API Call)
+    await validator.load_tickers()
+
     """Main entry point for the 61-request asynchronous workflow."""
     
     print(f"--- Starting Final 61-Request Workflow (Parse/Process Decoupled) ---")
@@ -63,43 +73,45 @@ async def main():
 
     SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     all_tickers = []
+
+    async with aiohttp.ClientSession() as session:
     
-    # --- Block 1: Sequential Fetch and Parse (1 API Call) ---
-    print("\n[BLOCK 1] Fetching and Parsing top post IDs...")
-    raw_listing_json = await simulate_api_call("Top 10 Post Listing")
-    post_ids = await parse_json_for_post_ids(raw_listing_json)
-    print(f"Total Post IDs to process: {len(post_ids)}")
+      # --- Block 1: Sequential Fetch and Parse (1 API Call) ---
+      print("\n[BLOCK 1] Fetching and Parsing top post IDs...")
+      raw_listing_json = await simulate_api_call("Top 10 Post Listing")
+      post_ids = await parse_json_for_post_ids(raw_listing_json)
+      print(f"Total Post IDs to process: {len(post_ids)}")
 
-    # --- Block 2: Concurrent Post Fetch (10 API Calls) ---
-    
-    # Create 10 concurrent tasks to fetch post body and extract comment IDs.
-    post_tasks = [fetch_post_data_and_comment_ids(int(p_id.split('P')[-1]), SEMAPHORE) for p_id in post_ids]
-        
-    print(f"\n[BLOCK 2] Launching {len(post_tasks)} concurrent Post Fetches (10 API calls)...")
-    post_results = await asyncio.gather(*post_tasks)
-    
-    # Consolidate results and prepare for the next block
-    comment_fetch_tasks = []
-    for post_tickers, comment_ids in post_results:
-        all_tickers.extend(post_tickers)
-        
-        # Create the reply fetch tasks for Block 3
-        for comment_id in comment_ids:
-            # Extract parent post ID for tracking (e.g., C1_5 -> post_id=5)
-            parent_post_id = int(comment_id.split('_')[-1]) 
-            task = fetch_full_comment_thread(comment_id, parent_post_id, SEMAPHORE)
-            comment_fetch_tasks.append(task)
-            
-    # --- Block 3: Highly Concurrent Comment/Reply Fetch (50 API Calls) ---
+      # --- Block 2: Concurrent Post Fetch (10 API Calls) ---
+      
+      # Create 10 concurrent tasks to fetch post body and extract comment IDs.
+      post_tasks = [fetch_post_data_and_comment_ids(int(p_id.split('P')[-1]), SEMAPHORE) for p_id in post_ids]
+          
+      print(f"\n[BLOCK 2] Launching {len(post_tasks)} concurrent Post Fetches (10 API calls)...")
+      post_results = await asyncio.gather(*post_tasks)
+      
+      # Consolidate results and prepare for the next block
+      comment_fetch_tasks = []
+      for post_tickers, comment_ids in post_results:
+          all_tickers.extend(post_tickers)
+          
+          # Create the reply fetch tasks for Block 3
+          for comment_id in comment_ids:
+              # Extract parent post ID for tracking (e.g., C1_5 -> post_id=5)
+              parent_post_id = int(comment_id.split('_')[-1]) 
+              task = fetch_full_comment_thread(comment_id, parent_post_id, SEMAPHORE)
+              comment_fetch_tasks.append(task)
+              
+      # --- Block 3: Highly Concurrent Comment/Reply Fetch (50 API Calls) ---
 
-    print(f"\n[BLOCK 3] Launching {len(comment_fetch_tasks)} highly concurrent Comment/Reply Fetches (50 API calls)...")
-    comment_results = await asyncio.gather(*comment_fetch_tasks)
+      print(f"\n[BLOCK 3] Launching {len(comment_fetch_tasks)} highly concurrent Comment/Reply Fetches (50 API calls)...")
+      comment_results = await asyncio.gather(*comment_fetch_tasks)
 
-    # Consolidate final results
-    for ticker_list in comment_results:
-        all_tickers.extend(ticker_list)
+      # Consolidate final results
+      for ticker_list in comment_results:
+          all_tickers.extend(ticker_list)
 
-    # --- Final Consolidation ---
+      # --- Final Consolidation ---
     
     print("\n" + "=" * 60)
     print(f"Workflow Complete. Total API Calls: 61")
