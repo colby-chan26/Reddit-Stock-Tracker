@@ -4,6 +4,7 @@ import aiohttp
 import os
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
+from enum import Enum
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,17 +12,20 @@ load_dotenv()
 MAX_CONCURRENT_REQUESTS = 15 
 NUM_TOP_POSTS = 10 
 NUM_COMMENTS_PER_POST = 5
-
+MAX_RETRIES = 1
+class SubmissionType(Enum):
+    POST = 0
+    COMMENT = 1
+    REPLY = 2
 @dataclass
 class SubmissionData:
     """Data class to store parsed Reddit submission information."""
     submission_id: str
-    upvote_ratio: float
     score: int
     created_utc: int
-    num_comments: int
     author: str
     subreddit: str
+    type: SubmissionType
 
 async def simulate_api_call(request_description: str) -> Dict[str, Any]:
     """A placeholder for a single, distinct network request, returning a simulated JSON response."""
@@ -53,8 +57,6 @@ async def simulate_api_call(request_description: str) -> Dict[str, Any]:
     return {"error": "Unknown request type"}
 
 # --- Fetch Data ---
-
-MAX_RETRIES = 1
 
 async def make_api_call(url: str, session: aiohttp.ClientSession, params: dict = None, retry_count: int = 0):
     """
@@ -106,24 +108,27 @@ async def parse_json_for_post_ids(raw_json: Dict[str, Any]) -> List[str]:
     print(post_ids)
     return post_ids
 
-async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[SubmissionData, str, List[str]]:
-    """Parses the JSON response for a single post, returning SubmissionData, post text, and comment IDs.
+async def extract_submission_data(submission_json: Dict[str, Any], submission_type: SubmissionType) -> Tuple[str, SubmissionData]:
+    # Extract the main text content for ticker extraction
+    # For posts: use selftext, fall back to body for comments/replies
+    text = submission_json.get('selftext', '').strip() or submission_json.get('body', '').strip()
+    title = submission_json.get('title', '') or ''
+    post_text_and_title = text + title
     
-    raw_json is expected to be an array where:
-    - raw_json[0] contains the post submission data
-    - raw_json[1] contains the comments data
-    """
+    # Extract metadata from the post
+    submission_data = SubmissionData(
+        submission_id=submission_json.get("id", ""),
+        score=submission_json.get("score", 0),
+        created_utc=submission_json.get("created_utc", 0),
+        author=submission_json.get("author", "Unknown"),
+        subreddit=submission_json.get("subreddit", "Unknown"),
+        type=submission_type
+    )
     
+    return post_text_and_title, submission_data
+
+async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[SubmissionData | None, str, List[str]]:
     try:
-        # Extract submission data from json[0].data.children[0].data
-        post_data = raw_json[0]["data"]["children"][0]["data"]
-        
-        # Extract the main text content (title + body) for ticker extraction
-        # If selftext is empty (e.g., video post), just use the title
-        selftext = post_data.get('selftext', '').strip()
-        title = post_data.get('title', '')
-        post_text_and_title = selftext if selftext else title
-        
         # Extract the first 5 comment IDs from json[1].data.children[0:5]
         comment_ids = []
         comments_data = raw_json[1]["data"]["children"]
@@ -133,36 +138,34 @@ async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[S
             comment_id = comment.get("data", {}).get("id")
             if comment_id:
                 comment_ids.append(comment_id)
+
+        # Extract submission data from json[0].data.children[0].data
+        post_data = raw_json[0]["data"]["children"][0]["data"]
         
-        # Extract metadata from the post
-        submission_data = SubmissionData(
-            submission_id=post_data.get("id", ""),
-            upvote_ratio=post_data.get("upvote_ratio", 0.0),
-            score=post_data.get("score", 0),
-            created_utc=post_data.get("created_utc", 0),
-            num_comments=post_data.get("num_comments", 0),
-            author=post_data.get("author", "Unknown"),
-            subreddit=post_data.get("subreddit", "Unknown")
-        )
+        # Extract submission data using helper function
+        post_text_and_title, submission_data = await extract_submission_data(post_data, SubmissionType.POST)
         
-        print(f"  💡 Parsed Post JSON: {submission_data.author} | Score: {submission_data.score} | Upvote Ratio: {submission_data.upvote_ratio:.2%} | {len(comment_ids)} comment IDs.")
+        print(f"  💡 Parsed Post JSON: {submission_data.author} | Score: {submission_data.score} | {len(comment_ids)} comment IDs.")
         return submission_data, post_text_and_title, comment_ids
         
     except (KeyError, TypeError, IndexError) as e:
         print(f"❌ Error parsing post content: {e}")
-        # Return empty SubmissionData on error
-        return SubmissionData(
-            submission_id="",
-            upvote_ratio=0.0,
-            score=0,
-            created_utc=0,
-            num_comments=0,
-            author="Error",
-            subreddit="Error"
-        ), "", []
+        return None, "", []
 
-async def parse_json_for_comment_thread(raw_json: Dict[str, Any]) -> str:
-    """Parses the JSON response for a single comment thread, returning a single string of all relevant text."""
+async def parse_json_for_comment_content(raw_json: Dict[str, Any], type: SubmissionType) -> Tuple[SubmissionData | None, str]:
+    """Parses the JSON response for a single comment or reply, returning a single string of all relevant text."""
+    
+    # Concatenate the comment body and all reply bodies into one string
+    comment_body = raw_json.get("body", "")
+    replies_text = " ".join(raw_json.get("replies", []))
+    
+    full_thread_text = f"{comment_body} {replies_text}"
+    
+    print(f"  💡 Parsed Comment Thread JSON: Consolidated comment and {len(raw_json.get('replies', []))} replies into one text block.")
+    return full_thread_text
+
+async def parse_json_for_reply_content(raw_json: Dict[str, Any], type: SubmissionType) -> Tuple[SubmissionData | None, str]:
+    """Parses the JSON response for a single comment or reply, returning a single string of all relevant text."""
     
     # Concatenate the comment body and all reply bodies into one string
     comment_body = raw_json.get("body", "")
@@ -177,7 +180,8 @@ async def parse_json_for_comment_thread(raw_json: Dict[str, Any]) -> str:
 
 def process_text(text_content: str, source_description: str) -> List[str]:
     """Finds and extracts tickers from the cleaned text content."""
-    # This function uses regex or other NLP methods to identify symbols (e.g., $TSLA, GME).
+
+        # Extract metadata from the post    # This function uses regex or other NLP methods to identify symbols (e.g., $TSLA, GME).
     # This is a synchronous, CPU-bound operation.
     time.sleep(0.001) 
     
@@ -221,7 +225,6 @@ async def main():
                     print(f"   Author: {submission_data.author}")
                     print(f"   Score: {submission_data.score}")
                     print(f"   Comment IDs: {comment_ids}\n")
-                    print(f"   Post text and title: {post_text}\n")
                 else:
                     print("❌ Failed to fetch post content or comments\n")
             else:

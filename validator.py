@@ -5,11 +5,12 @@ from fallback import FALLBACK
 from typing import Set
 from dotenv import load_dotenv
 
+SEC_URL = "https://www.sec.gov/files/company_tickers.json"
+
 class SECTickerValidator:
     def __init__(self):
         load_dotenv()
         self.valid_tickers: Set[str] = set()
-        self.sec_url = "https://www.sec.gov/files/company_tickers.json"
         
         # CRITICAL: SEC requires a User-Agent with a contact email.
         # Replace this with your actual contact info.
@@ -28,7 +29,7 @@ class SECTickerValidator:
         # We create a temporary session just for this one-off startup task
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(self.sec_url, headers=self.headers) as response:
+                async with session.get(SEC_URL, headers=self.headers) as response:
                     response.raise_for_status()
                     data = await response.json()
                     

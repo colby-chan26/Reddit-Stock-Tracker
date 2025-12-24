@@ -5,7 +5,7 @@ from typing import List, Tuple
 from utils import (
     parse_json_for_post_ids,
     parse_json_for_post_content,
-    parse_json_for_comment_thread,
+    parse_json_for_comment,
     process_text,
     simulate_api_call,
 )
@@ -21,8 +21,12 @@ NUM_COMMENTS_PER_POST = 5
 
 # --- HELPER FUNCTIONS (Simulating API Calls and Processing) ---
 
-async def fetch_full_comment_thread(comment_id: str, post_id: int, semaphore: asyncio.Semaphore) -> List[str]:
-    """Step 3: Fetches the comment and all its nested replies (1 API CALL), then parses and processes."""
+async def fetch_comment_data(comment_id: str, post_id: int, semaphore: asyncio.Semaphore) -> Tuple[List[str], List]:
+    """Step 3a: Fetches the comment and its nested replies (1 API CALL), then parses and processes the comment.
+    
+    Returns:
+        A tuple of (comment_tickers, replies_list) where replies_list contains the reply objects to process.
+    """
     
     request_desc = f"Comment {comment_id} and all Replies (Post {post_id})"
     
@@ -30,12 +34,43 @@ async def fetch_full_comment_thread(comment_id: str, post_id: int, semaphore: as
     async with semaphore:
         raw_thread_json = await simulate_api_call(request_desc)
         print(f"    ✅ Completed API call: {request_desc}")
-            
-    # --- Part 2: JSON Parsing (CPU-Bound) ---
-    thread_text = await parse_json_for_comment_thread(raw_thread_json)
     
-    # --- Part 3: Text Processing (CPU-Bound) ---
-    return process_text(thread_text, request_desc)
+    # --- Part 2: Extract comment and replies from raw JSON ---
+    # TODO: Extract the comment data and replies list from raw_thread_json
+    comment_data = {}  # The main comment
+    replies_list = []  # List of reply objects
+    
+    # --- Part 3: Parse and Process the Main Comment ---
+    # TODO: Parse the comment data
+    # thread_text = await parse_json_for_comment_or_reply_content(comment_data, SubmissionType.COMMENT)
+    # comment_tickers = process_text(thread_text, request_desc)
+    
+    comment_tickers = []
+    return comment_tickers, replies_list
+
+
+async def fetch_reply_data(reply: object) -> List[str]:
+    """Step 3b: Takes a list of reply objects and processes each one.
+    
+    Args:
+        replies_list: List of reply objects extracted from the API response
+        post_id: The parent post ID for tracking
+    
+    Returns:
+        List of tickers found in all replies
+    """
+    
+    all_reply_tickers = []
+    
+        # --- Parse the individual reply ---
+        # TODO: Parse the reply data
+        # thread_text = await parse_json_for_comment_or_reply_content(reply, SubmissionType.REPLY)
+        
+        # --- Process the text ---
+        # reply_tickers = process_text(thread_text, f"Reply in Post {post_id}")
+        # all_reply_tickers.extend(reply_tickers)
+    
+    return all_reply_tickers
 
 
 async def fetch_post_data_and_comment_ids(post_id: int, semaphore: asyncio.Semaphore) -> Tuple[List[str], List[str]]:
@@ -95,21 +130,36 @@ async def main():
       for post_tickers, comment_ids in post_results:
           all_tickers.extend(post_tickers)
           
-          # Create the reply fetch tasks for Block 3
+          # Create the comment/reply fetch tasks for Block 3
           for comment_id in comment_ids:
               # Extract parent post ID for tracking (e.g., C1_5 -> post_id=5)
-              parent_post_id = int(comment_id.split('_')[-1]) 
-              task = fetch_full_comment_thread(comment_id, parent_post_id, SEMAPHORE)
+              parent_post_id = int(comment_id.split('_')[-1])
+              task = fetch_comment_data(comment_id, parent_post_id, SEMAPHORE)
               comment_fetch_tasks.append(task)
               
       # --- Block 3: Highly Concurrent Comment/Reply Fetch (50 API Calls) ---
 
-      print(f"\n[BLOCK 3] Launching {len(comment_fetch_tasks)} highly concurrent Comment/Reply Fetches (50 API calls)...")
+      print(f"\n[BLOCK 3] Launching {len(comment_fetch_tasks)} concurrent Comment Fetches (50 API calls)...")
       comment_results = await asyncio.gather(*comment_fetch_tasks)
-
-      # Consolidate final results
-      for ticker_list in comment_results:
-          all_tickers.extend(ticker_list)
+      
+      # Process comment results and prepare individual reply tasks
+      reply_tasks = []
+      for comment_tickers, replies_list in comment_results:
+          all_tickers.extend(comment_tickers)
+          
+          # Create individual tasks for each reply (no additional API calls needed)
+          for reply in replies_list:
+              task = fetch_reply_data(reply)  # post_id not needed for individual reply processing
+              reply_tasks.append(task)
+      
+      # Execute all reply processing tasks concurrently
+      if reply_tasks:
+          print(f"\n[BLOCK 3 Continued] Processing {len(reply_tasks)} replies...")
+          reply_results = await asyncio.gather(*reply_tasks)
+          
+          # Consolidate reply results
+          for reply_tickers in reply_results:
+              all_tickers.extend(reply_tickers)
 
       # --- Final Consolidation ---
     
