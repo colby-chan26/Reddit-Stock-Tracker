@@ -152,29 +152,44 @@ async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[S
         print(f"❌ Error parsing post content: {e}")
         return None, "", []
 
-async def parse_json_for_comment_content(raw_json: Dict[str, Any], type: SubmissionType) -> Tuple[SubmissionData | None, str]:
-    """Parses the JSON response for a single comment or reply, returning a single string of all relevant text."""
-    
-    # Concatenate the comment body and all reply bodies into one string
-    comment_body = raw_json.get("body", "")
-    replies_text = " ".join(raw_json.get("replies", []))
-    
-    full_thread_text = f"{comment_body} {replies_text}"
-    
-    print(f"  💡 Parsed Comment Thread JSON: Consolidated comment and {len(raw_json.get('replies', []))} replies into one text block.")
-    return full_thread_text
+async def parse_json_for_comment_content(raw_json: List[Dict[str, Any]]) -> Tuple[SubmissionData | None, str, List]:
+    try:
+        # Extract comment data from json[1].data.children[0].data
+        comment_data = raw_json[1]["data"]["children"][0]["data"]
+        
+        # Extract reply objects from json[1].data.children[0].data.replies.data.children
+        reply_objects = []
+        replies_structure = comment_data.get("replies", {})
+        if isinstance(replies_structure, dict):
+            replies_children = replies_structure.get("data", {}).get("children", [])
+            reply_objects.extend(replies_children)
+        
+        # Extract submission data using helper function
+        comment_text_and_title, submission_data = await extract_submission_data(comment_data, SubmissionType.COMMENT)
+        
+        print(f"  💡 Parsed Comment JSON: {submission_data.author} | Score: {submission_data.score} | {len(reply_objects)} replies.")
+        return submission_data, comment_text_and_title, reply_objects
+        
+    except (KeyError, TypeError, IndexError) as e:
+        print(f"❌ Error parsing comment content: {e}")
+        return None, "", []
 
-async def parse_json_for_reply_content(raw_json: Dict[str, Any], type: SubmissionType) -> Tuple[SubmissionData | None, str]:
-    """Parses the JSON response for a single comment or reply, returning a single string of all relevant text."""
+async def parse_json_for_reply_content(raw_json: Dict[str, Any]) -> Tuple[SubmissionData | None, str]:
+    """Parses the JSON response for a single reply, extracting reply data and text."""
     
-    # Concatenate the comment body and all reply bodies into one string
-    comment_body = raw_json.get("body", "")
-    replies_text = " ".join(raw_json.get("replies", []))
-    
-    full_thread_text = f"{comment_body} {replies_text}"
-    
-    print(f"  💡 Parsed Comment Thread JSON: Consolidated comment and {len(raw_json.get('replies', []))} replies into one text block.")
-    return full_thread_text
+    try:
+        # Extract reply data from the raw_json
+        reply_data = raw_json.get("data", raw_json)
+        
+        # Extract submission data using helper function
+        reply_text, submission_data = await extract_submission_data(reply_data, SubmissionType.REPLY)
+        
+        print(f"  💡 Parsed Reply JSON: {submission_data.author} | Score: {submission_data.score}")
+        return submission_data, reply_text
+        
+    except (KeyError, TypeError, IndexError) as e:
+        print(f"❌ Error parsing reply content: {e}")
+        return None, ""
 
 # --- TEXT PROCESSING FUNCTION (CPU-BOUND) ---
 
@@ -192,8 +207,8 @@ def process_text(text_content: str, source_description: str) -> List[str]:
 # --- CORE ASYNCHRONOUS WORKFLOW FUNCTIONS ---
 
 async def main():
-    """Test function for make_api_call, parse_json_for_post_ids, and parse_json_for_post_content"""
-    print("🧪 Testing make_api_call, parse_json_for_post_ids, and parse_json_for_post_content...\n")
+    """Test function for make_api_call, parse_json_for_post_ids, parse_json_for_post_content, and parse_json_for_comment_content"""
+    print("🧪 Testing parsing functions...\n")
     
     # Create a session for the test
     async with aiohttp.ClientSession() as session:
@@ -214,17 +229,54 @@ async def main():
                 # Test 3: Fetch and parse content for the first post
                 print("Test 3: Fetching and parsing post content")
                 first_post_id = post_ids[0]
-                post_url = f"https://www.reddit.com/r/ValueInvesting/comments/{first_post_id}.json"
+                post_url = f"https://www.reddit.com/r/ValueInvesting/comments/{first_post_id}.json?sort=top&limit=7"
                 
                 post_data = await make_api_call(post_url, session)
                 
                 if post_data:
                     # post_data already contains both post and comments data in array format
                     submission_data, post_text, comment_ids = await parse_json_for_post_content(post_data)
-                    print(f"✅ Successfully parsed post content")
-                    print(f"   Author: {submission_data.author}")
-                    print(f"   Score: {submission_data.score}")
-                    print(f"   Comment IDs: {comment_ids}\n")
+                    if submission_data:
+                        print(f"✅ Successfully parsed post content")
+                        print(f"   Author: {submission_data.author}")
+                        print(f"   Score: {submission_data.score}")
+                        print(f"   Comment IDs: {comment_ids}\n")
+                        
+                        # Test 4: Fetch and parse content for the first comment
+                        if comment_ids:
+                            print("Test 4: Fetching and parsing first comment content")
+                            first_comment_id = comment_ids[0]
+                            comment_url = f"https://www.reddit.com/r/ValueInvesting/comments/{first_post_id}/comment/{first_comment_id}.json?sort=top&limit=7"
+                            
+                            comment_data = await make_api_call(comment_url, session)
+                            
+                            if comment_data:
+                                comment_submission_data, comment_text, reply_objects = await parse_json_for_comment_content(comment_data)
+                                if comment_submission_data:
+                                    print(f"✅ Successfully parsed comment content")
+                                    print(f"   Author: {comment_submission_data.author}")
+                                    print(f"   Score: {comment_submission_data.score}")
+                                    print(f"   Reply Objects: {len(reply_objects)} replies\n")
+                                    
+                                    # Test 5: Fetch and parse content for the first reply
+                                    if reply_objects:
+                                        print("Test 5: Parsing first reply content")
+                                        first_reply = reply_objects[0]
+                                        
+                                        reply_submission_data, reply_text = await parse_json_for_reply_content(first_reply)
+                                        if reply_submission_data:
+                                            print(f"✅ Successfully parsed reply content")
+                                            print(f"   Author: {reply_submission_data.author}")
+                                            print(f"   Score: {reply_submission_data.score}")
+                                            print(f"   Type: {reply_submission_data.type.name}\n")
+                                        else:
+                                            print("❌ Failed to parse reply content\n")
+                                else:
+                                    print("❌ Failed to parse comment content\n")
+                            else:
+                                print("❌ Failed to fetch comment data\n")
+                    else:
+                        print("❌ Failed to parse post content\n")
                 else:
                     print("❌ Failed to fetch post content or comments\n")
             else:
