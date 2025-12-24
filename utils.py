@@ -54,7 +54,9 @@ async def simulate_api_call(request_description: str) -> Dict[str, Any]:
 
 # --- Fetch Data ---
 
-async def make_api_call(url: str, session: aiohttp.ClientSession, params: dict = None):
+MAX_RETRIES = 1
+
+async def make_api_call(url: str, session: aiohttp.ClientSession, params: dict = None, retry_count: int = 0):
     """
     Performs the actual GET request using the shared session.
     """
@@ -67,10 +69,13 @@ async def make_api_call(url: str, session: aiohttp.ClientSession, params: dict =
             
             # Check for Rate Limits (429) or Errors
             if response.status == 429:
+                if retry_count >= MAX_RETRIES:
+                    print(f"⚠️ Rate limited on {url}. Max retries exceeded.")
+                    return None
                 print(f"⚠️ Rate limited on {url}. Sleeping for 60s...")
                 await asyncio.sleep(60)
-                # Retry recursively (risky without a counter, but simple for example)
-                return await make_api_call(url, session, params)
+                # Retry once with incremented counter
+                return await make_api_call(url, session, params, retry_count + 1)
 
             response.raise_for_status() # Raise error for 404, 500, etc.
             
@@ -101,18 +106,33 @@ async def parse_json_for_post_ids(raw_json: Dict[str, Any]) -> List[str]:
     print(post_ids)
     return post_ids
 
-async def parse_json_for_post_content(raw_json: Dict[str, Any]) -> Tuple[SubmissionData, str, List[str]]:
-    """Parses the JSON response for a single post, returning SubmissionData, post text, and comment IDs."""
+async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[SubmissionData, str, List[str]]:
+    """Parses the JSON response for a single post, returning SubmissionData, post text, and comment IDs.
+    
+    raw_json is expected to be an array where:
+    - raw_json[0] contains the post submission data
+    - raw_json[1] contains the comments data
+    """
     
     try:
-        # Navigate Reddit's JSON structure: data -> children -> data -> (content and metadata)
-        post_data = raw_json.get("data", raw_json)
+        # Extract submission data from json[0].data.children[0].data
+        post_data = raw_json[0]["data"]["children"][0]["data"]
         
         # Extract the main text content (title + body) for ticker extraction
-        post_text_and_title = f"{post_data.get('title', '')} {post_data.get('selftext', '')}"
+        # If selftext is empty (e.g., video post), just use the title
+        selftext = post_data.get('selftext', '').strip()
+        title = post_data.get('title', '')
+        post_text_and_title = selftext if selftext else title
         
-        # Extract the IDs needed for the next concurrent block
-        comment_ids = post_data.get("top_comment_ids", [])
+        # Extract the first 5 comment IDs from json[1].data.children[0:5]
+        comment_ids = []
+        comments_data = raw_json[1]["data"]["children"]
+        for i, comment in enumerate(comments_data):
+            if i >= NUM_COMMENTS_PER_POST:
+                break
+            comment_id = comment.get("data", {}).get("id")
+            if comment_id:
+                comment_ids.append(comment_id)
         
         # Extract metadata from the post
         submission_data = SubmissionData(
@@ -128,7 +148,7 @@ async def parse_json_for_post_content(raw_json: Dict[str, Any]) -> Tuple[Submiss
         print(f"  💡 Parsed Post JSON: {submission_data.author} | Score: {submission_data.score} | Upvote Ratio: {submission_data.upvote_ratio:.2%} | {len(comment_ids)} comment IDs.")
         return submission_data, post_text_and_title, comment_ids
         
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, IndexError) as e:
         print(f"❌ Error parsing post content: {e}")
         # Return empty SubmissionData on error
         return SubmissionData(
@@ -168,8 +188,8 @@ def process_text(text_content: str, source_description: str) -> List[str]:
 # --- CORE ASYNCHRONOUS WORKFLOW FUNCTIONS ---
 
 async def main():
-    """Test function for make_api_call and parse_json_for_post_ids"""
-    print("🧪 Testing make_api_call and parse_json_for_post_ids...\n")
+    """Test function for make_api_call, parse_json_for_post_ids, and parse_json_for_post_content"""
+    print("🧪 Testing make_api_call, parse_json_for_post_ids, and parse_json_for_post_content...\n")
     
     # Create a session for the test
     async with aiohttp.ClientSession() as session:
@@ -186,6 +206,24 @@ async def main():
             if post_ids:
                 print(f"✅ Successfully parsed {len(post_ids)} post IDs")
                 print(f"Post IDs: {post_ids}\n")
+                
+                # Test 3: Fetch and parse content for the first post
+                print("Test 3: Fetching and parsing post content")
+                first_post_id = post_ids[0]
+                post_url = f"https://www.reddit.com/r/ValueInvesting/comments/{first_post_id}.json"
+                
+                post_data = await make_api_call(post_url, session)
+                
+                if post_data:
+                    # post_data already contains both post and comments data in array format
+                    submission_data, post_text, comment_ids = await parse_json_for_post_content(post_data)
+                    print(f"✅ Successfully parsed post content")
+                    print(f"   Author: {submission_data.author}")
+                    print(f"   Score: {submission_data.score}")
+                    print(f"   Comment IDs: {comment_ids}\n")
+                    print(f"   Post text and title: {post_text}\n")
+                else:
+                    print("❌ Failed to fetch post content or comments\n")
             else:
                 print("❌ Failed to parse post IDs\n")
         else:
