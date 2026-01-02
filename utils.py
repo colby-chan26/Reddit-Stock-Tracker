@@ -3,8 +3,7 @@ import time
 import aiohttp
 import os
 from typing import List, Tuple, Dict, Any
-from dataclasses import dataclass
-from enum import Enum
+from custom_types import SubmissionData, SubmissionType
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,19 +12,6 @@ MAX_CONCURRENT_REQUESTS = 15
 NUM_TOP_POSTS = 10 
 NUM_COMMENTS_PER_POST = 5
 MAX_RETRIES = 1
-class SubmissionType(Enum):
-    POST = 0
-    COMMENT = 1
-    REPLY = 2
-@dataclass
-class SubmissionData:
-    """Data class to store parsed Reddit submission information."""
-    submission_id: str
-    score: int
-    created_utc: int
-    author: str
-    subreddit: str
-    type: SubmissionType
 
 async def simulate_api_call(request_description: str) -> Dict[str, Any]:
     """A placeholder for a single, distinct network request, returning a simulated JSON response."""
@@ -203,87 +189,4 @@ def process_text(text_content: str, source_description: str) -> List[str]:
     # Simulate finding a ticker
     simulated_ticker = f"TKR_{source_description.split(' ')[0]}_{len(text_content) % 100}"
     return [simulated_ticker]
-
-# --- CORE ASYNCHRONOUS WORKFLOW FUNCTIONS ---
-
-async def main():
-    """Test function for make_api_call, parse_json_for_post_ids, parse_json_for_post_content, and parse_json_for_comment_content"""
-    print("🧪 Testing parsing functions...\n")
-    
-    # Create a session for the test
-    async with aiohttp.ClientSession() as session:
-        # Test 1: Fetch JSON from Reddit
-        print("Test 1: Fetching JSON from Reddit")
-        url = "https://www.reddit.com/r/ValueInvesting/top.json?limit=10&t=week"
-        result = await make_api_call(url, session)
-        if result:
-            print(f"✅ Success! Retrieved data from Reddit\n")
-            
-            # Test 2: Parse the JSON for post IDs
-            print("Test 2: Parsing JSON for post IDs")
-            post_ids = await parse_json_for_post_ids(result)
-            if post_ids:
-                print(f"✅ Successfully parsed {len(post_ids)} post IDs")
-                print(f"Post IDs: {post_ids}\n")
-                
-                # Test 3: Fetch and parse content for the first post
-                print("Test 3: Fetching and parsing post content")
-                first_post_id = post_ids[0]
-                post_url = f"https://www.reddit.com/r/ValueInvesting/comments/{first_post_id}.json?sort=top&limit=7"
-                
-                post_data = await make_api_call(post_url, session)
-                
-                if post_data:
-                    # post_data already contains both post and comments data in array format
-                    submission_data, post_text, comment_ids = await parse_json_for_post_content(post_data)
-                    if submission_data:
-                        print(f"✅ Successfully parsed post content")
-                        print(f"   Author: {submission_data.author}")
-                        print(f"   Score: {submission_data.score}")
-                        print(f"   Comment IDs: {comment_ids}\n")
-                        
-                        # Test 4: Fetch and parse content for the first comment
-                        if comment_ids:
-                            print("Test 4: Fetching and parsing first comment content")
-                            first_comment_id = comment_ids[0]
-                            comment_url = f"https://www.reddit.com/r/ValueInvesting/comments/{first_post_id}/comment/{first_comment_id}.json?sort=top&limit=7"
-                            
-                            comment_data = await make_api_call(comment_url, session)
-                            
-                            if comment_data:
-                                comment_submission_data, comment_text, reply_objects = await parse_json_for_comment_content(comment_data)
-                                if comment_submission_data:
-                                    print(f"✅ Successfully parsed comment content")
-                                    print(f"   Author: {comment_submission_data.author}")
-                                    print(f"   Score: {comment_submission_data.score}")
-                                    print(f"   Reply Objects: {len(reply_objects)} replies\n")
-                                    
-                                    # Test 5: Fetch and parse content for the first reply
-                                    if reply_objects:
-                                        print("Test 5: Parsing first reply content")
-                                        first_reply = reply_objects[0]
-                                        
-                                        reply_submission_data, reply_text = await parse_json_for_reply_content(first_reply)
-                                        if reply_submission_data:
-                                            print(f"✅ Successfully parsed reply content")
-                                            print(f"   Author: {reply_submission_data.author}")
-                                            print(f"   Score: {reply_submission_data.score}")
-                                            print(f"   Type: {reply_submission_data.type.name}\n")
-                                        else:
-                                            print("❌ Failed to parse reply content\n")
-                                else:
-                                    print("❌ Failed to parse comment content\n")
-                            else:
-                                print("❌ Failed to fetch comment data\n")
-                    else:
-                        print("❌ Failed to parse post content\n")
-                else:
-                    print("❌ Failed to fetch post content or comments\n")
-            else:
-                print("❌ Failed to parse post IDs\n")
-        else:
-            print("❌ Failed to fetch data\n")
-
-if __name__ == "__main__":
-    asyncio.run(main())
 
