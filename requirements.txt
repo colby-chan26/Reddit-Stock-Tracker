@@ -39,6 +39,7 @@ onnxruntime==1.23.2
 packaging==25.0
 propcache==0.4.1
 protobuf==6.33.2
+psycopg==3.3.2
 python-dotenv==1.2.1
 PyYAML==6.0.3
 regex==2025.11.3
