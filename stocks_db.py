@@ -10,11 +10,7 @@ load_dotenv()
 class StocksDB:
     def __init__(self):
         self.conn = psycopg.connect(
-            host=os.getenv("DB_HOST"), 
-            dbname=os.getenv("DB_NAME"), 
-            user=os.getenv("DB_USER"), 
-            password=os.getenv("DB_PASSWORD"), 
-            port=os.getenv("DB_PORT")
+            os.getenv('DB_URL')
         )
         self.cur = self.conn.cursor()
         
