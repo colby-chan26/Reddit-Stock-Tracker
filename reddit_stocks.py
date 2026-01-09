@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import time
 import aiohttp
@@ -15,10 +16,9 @@ from stocks_db import StocksDB
 # --- CONCURRENCY PARAMETERS ---
 
 MAX_CONCURRENT_REQUESTS = 15
-NUM_TOP_POSTS = 10
+NUM_TOP_POSTS = 15
 NUM_COMMENTS_PER_POST = 5
 NUM_REPLIES_PER_COMMENT = 5
-SUBREDDITS = ["ValueInvesting"]
 
 # --- HELPER FUNCTIONS ---
 
@@ -192,16 +192,20 @@ async def process_subreddit(
 
     print(f"✅ Completed processing r/{subreddit}")
 
-async def main():
-    """Main entry point - processes all subreddits sequentially."""
+async def main(subreddit: str):
+    """Main entry point - processes a single subreddit.
+    
+    Args:
+        subreddit: Name of the subreddit to process
+    """
     
     print(f"--- Starting Reddit Stock Tracker Workflow ---")
-    print(f"Subreddits to process: {', '.join([f'r/{s}' for s in SUBREDDITS])}")
+    print(f"Subreddit to process: r/{subreddit}")
     print(f"Max Concurrent Requests (Semaphore): {MAX_CONCURRENT_REQUESTS}")
     print(f"Posts per subreddit: {NUM_TOP_POSTS}")
     print("-" * 60)
 
-    # Initialize database and validator (shared across all subreddits)
+    # Initialize database and validator
     db = StocksDB()
     validator = SECTickerValidator()
     await validator.load_tickers()
@@ -210,25 +214,27 @@ async def main():
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     async with aiohttp.ClientSession() as session:
-        # Process each subreddit sequentially
-        for i, subreddit in enumerate(SUBREDDITS):
-            await process_subreddit(subreddit, session, validator, db, semaphore)
-            
-            # Wait 60 seconds before processing next subreddit (except after the last one)
-            if i < len(SUBREDDITS) - 1:
-                print(f"\n⏳ Waiting 60 seconds before processing next subreddit...")
-                await asyncio.sleep(60)
+        # Process the subreddit
+        await process_subreddit(subreddit, session, validator, db, semaphore)
     
-    # Close database connection after all subreddits are processed
+    # Close database connection
     db.close()
     print("\n" + "=" * 60)
-    print(f"All Subreddits Processed Successfully!")
+    print(f"Subreddit Processed Successfully!")
     print("=" * 60)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Track stock mentions in a Reddit subreddit")
+    parser.add_argument(
+        "subreddit",
+        type=str,
+        help="Name of the subreddit to process (without 'r/' prefix)"
+    )
+    args = parser.parse_args()
+    
     start_time = time.time()
-    asyncio.run(main()) 
+    asyncio.run(main(args.subreddit)) 
     end_time = time.time()
     
     print(f"\nTotal execution time: {end_time - start_time:.2f} seconds")
