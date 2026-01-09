@@ -50,8 +50,6 @@ async def make_api_call(url: str, session: aiohttp.ClientSession, params: dict =
     """
     # Reddit usually requires a unique User-Agent to avoid 429 (Too Many Requests)
     headers = {"User-Agent": f"MyStockScraper/1.0 {os.getenv("EMAIL")} by u/Ok_Cucumber_3696"}
-
-    print(headers)
     
     try:
         # The 'await' happens here - yielding control while waiting for Reddit
