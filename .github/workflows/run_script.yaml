@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 0 * * 1,3'
   workflow_dispatch:
+    inputs:
+      subreddit:
+        description: 'Subreddit to scrape (e.g., ValueInvesting, stocks)'
+        required: true
+        default: 'ValueInvesting'
+        type: string
 
 jobs:
   run-script:
@@ -22,13 +28,20 @@ jobs:
           python-version: '3.13'
 
       - name: Run Script with uv
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          EMAIL: ${{ secrets.EMAIL }}
         run: |
-          DAY=$(date +%u)
-
-          if [ "$DAY" -eq 1 ]; then
-            SUBREDDIT="ValueInvesting"
-          elif [ "$DAY" -eq 3 ]; then
-            SUBREDDIT="stocks"
+          # Use manual input if available, otherwise determine by day
+          if [ -n "${{ github.event.inputs.subreddit }}" ]; then
+            SUBREDDIT="${{ github.event.inputs.subreddit }}"
+          else
+            DAY=$(date +%u)
+            if [ "$DAY" -eq 1 ]; then
+              SUBREDDIT="ValueInvesting"
+            elif [ "$DAY" -eq 3 ]; then
+              SUBREDDIT="stocks"
+            fi
           fi
 
           # 'uv run' handles environment creation and dependency 
