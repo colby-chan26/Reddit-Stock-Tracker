@@ -2,6 +2,8 @@ import argparse
 import asyncio
 import time
 import aiohttp
+import json
+from datetime import datetime
 from typing import List, Tuple
 from utils import (
     make_api_call,
@@ -21,6 +23,26 @@ NUM_COMMENTS_PER_POST = 5
 NUM_REPLIES_PER_COMMENT = 5
 
 # --- HELPER FUNCTIONS ---
+
+def save_last_run_date(subreddit: str) -> None:
+    """Save the last run date and time to a JSON file.
+    
+    Args:
+        subreddit: Name of the subreddit that was processed
+    """
+    last_run_data = {
+        "subreddit": subreddit,
+        "last_run": datetime.now().isoformat(),
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    try:
+        with open("last_run.json", "w") as f:
+            json.dump(last_run_data, f, indent=2)
+        print(f"\n✅ Last run date saved to last_run.json")
+    except Exception as e:
+        print(f"\n⚠️  Warning: Could not save last run date: {e}")
+
 
 async def fetch_comment_data(
     comment_id: str, 
@@ -219,6 +241,10 @@ async def main(subreddit: str):
     
     # Close database connection
     db.close()
+    
+    # Save last run date
+    save_last_run_date(subreddit)
+    
     print("\n" + "=" * 60)
     print(f"Subreddit Processed Successfully!")
     print("=" * 60)
