@@ -15,13 +15,6 @@ from utils import (
 from validator import SECTickerValidator
 from stocks_db import StocksDB
 
-# --- CONCURRENCY PARAMETERS ---
-
-MAX_CONCURRENT_REQUESTS = 15
-NUM_TOP_POSTS = 15
-NUM_COMMENTS_PER_POST = 5
-NUM_REPLIES_PER_COMMENT = 5
-
 # --- HELPER FUNCTIONS ---
 
 def save_last_run_date(subreddit: str) -> None:
@@ -51,7 +44,8 @@ async def fetch_comment_data(
     session: aiohttp.ClientSession,
     validator: SECTickerValidator,
     db: StocksDB,
-    semaphore: asyncio.Semaphore
+    semaphore: asyncio.Semaphore,
+    num_replies_per_comment: int
 ) -> List:
     """Step 3a: Fetches the comment and its nested replies (1 API CALL), then parses and processes the comment.
     
@@ -61,7 +55,7 @@ async def fetch_comment_data(
     
     # --- Part 1: API Call (I/O-Bound) ---
     async with semaphore:
-        comment_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/comment/{comment_id}.json?sort=top&limit={NUM_REPLIES_PER_COMMENT + 2}"
+        comment_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/comment/{comment_id}.json?sort=top&limit={num_replies_per_comment + 2}"
         raw_thread_json = await make_api_call(comment_url, session)
         if not raw_thread_json:
             print(f"    ❌ Failed to fetch comment {comment_id}")
@@ -108,13 +102,14 @@ async def fetch_post_data_and_comment_ids(
     session: aiohttp.ClientSession,
     validator: SECTickerValidator,
     db: StocksDB,
-    semaphore: asyncio.Semaphore
+    semaphore: asyncio.Semaphore,
+    num_comments_per_post: int
 ) -> List[str]:
     """Step 2: Fetches the post body (1 API CALL), parses, extracts tickers, inserts to DB, and returns comment IDs."""
     
     # --- Part 1: API Call (I/O-Bound) ---
     async with semaphore:
-        post_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}.json?sort=top&limit={NUM_COMMENTS_PER_POST + 2}"
+        post_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}.json?sort=top&limit={num_comments_per_post + 2}"
         raw_post_json = await make_api_call(post_url, session)
         if not raw_post_json:
             print(f"  ❌ Failed to fetch post {post_id}")
@@ -137,7 +132,10 @@ async def process_subreddit(
     session: aiohttp.ClientSession,
     validator: SECTickerValidator,
     db: StocksDB,
-    semaphore: asyncio.Semaphore
+    semaphore: asyncio.Semaphore,
+    num_top_posts: int,
+    num_comments_per_post: int,
+    num_replies_per_comment: int
 ) -> None:
     """Process a single subreddit - fetch posts, comments, and replies.
     
@@ -147,6 +145,9 @@ async def process_subreddit(
         validator: Ticker validator instance
         db: Database connection instance
         semaphore: Concurrency control semaphore
+        num_top_posts: Number of top posts to fetch
+        num_comments_per_post: Number of comments to fetch per post
+        num_replies_per_comment: Number of replies to fetch per comment
     """
     
     print(f"\n{'='*60}")
@@ -155,7 +156,7 @@ async def process_subreddit(
 
     # --- Block 1: Sequential Fetch and Parse (1 API Call) ---
     print("\n[BLOCK 1] Fetching and Parsing top post IDs...")
-    listing_url = f"https://www.reddit.com/r/{subreddit}/top.json?limit={NUM_TOP_POSTS}&t=week"
+    listing_url = f"https://www.reddit.com/r/{subreddit}/top.json?limit={num_top_posts}&t=week"
     raw_listing_json = await make_api_call(listing_url, session)
     
     if not raw_listing_json:
@@ -169,11 +170,11 @@ async def process_subreddit(
     
     # Create concurrent tasks to fetch post body and extract comment IDs.
     post_tasks = [
-        fetch_post_data_and_comment_ids(post_id, subreddit, session, validator, db, semaphore) 
+        fetch_post_data_and_comment_ids(post_id, subreddit, session, validator, db, semaphore, num_comments_per_post) 
         for post_id in post_ids
     ]
         
-    print(f"\n[BLOCK 2] Launching {len(post_tasks)} concurrent Post Fetches ({NUM_TOP_POSTS} API calls)...")
+    print(f"\n[BLOCK 2] Launching {len(post_tasks)} concurrent Post Fetches ({num_top_posts} API calls)...")
     post_results = await asyncio.gather(*post_tasks)
     
     # Consolidate results and prepare for the next block
@@ -191,7 +192,7 @@ async def process_subreddit(
             else:
                 parent_post_id = post_ids[0]  # fallback
                 
-            task = fetch_comment_data(comment_id, parent_post_id, subreddit, session, validator, db, semaphore)
+            task = fetch_comment_data(comment_id, parent_post_id, subreddit, session, validator, db, semaphore, num_replies_per_comment)
             comment_fetch_tasks.append(task)
             
     # --- Block 3: Highly Concurrent Comment/Reply Fetch ---
@@ -214,17 +215,29 @@ async def process_subreddit(
 
     print(f"✅ Completed processing r/{subreddit}")
 
-async def main(subreddit: str):
+async def main(
+    subreddit: str,
+    max_concurrent_requests: int = 15,
+    num_top_posts: int = 15,
+    num_comments_per_post: int = 5,
+    num_replies_per_comment: int = 5
+):
     """Main entry point - processes a single subreddit.
     
     Args:
         subreddit: Name of the subreddit to process
+        max_concurrent_requests: Maximum concurrent API requests
+        num_top_posts: Number of top posts to fetch
+        num_comments_per_post: Number of comments to fetch per post
+        num_replies_per_comment: Number of replies to fetch per comment
     """
     
     print(f"--- Starting Reddit Stock Tracker Workflow ---")
     print(f"Subreddit to process: r/{subreddit}")
-    print(f"Max Concurrent Requests (Semaphore): {MAX_CONCURRENT_REQUESTS}")
-    print(f"Posts per subreddit: {NUM_TOP_POSTS}")
+    print(f"Max Concurrent Requests (Semaphore): {max_concurrent_requests}")
+    print(f"Posts per subreddit: {num_top_posts}")
+    print(f"Comments per post: {num_comments_per_post}")
+    print(f"Replies per comment: {num_replies_per_comment}")
     print("-" * 60)
 
     # Initialize database and validator
@@ -233,11 +246,11 @@ async def main(subreddit: str):
     await validator.load_tickers()
     print("✅ Database connection and validator initialized\n")
 
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    semaphore = asyncio.Semaphore(max_concurrent_requests)
 
     async with aiohttp.ClientSession() as session:
         # Process the subreddit
-        await process_subreddit(subreddit, session, validator, db, semaphore)
+        await process_subreddit(subreddit, session, validator, db, semaphore, num_top_posts, num_comments_per_post, num_replies_per_comment)
     
     # Close database connection
     db.close()
@@ -257,10 +270,40 @@ if __name__ == "__main__":
         type=str,
         help="Name of the subreddit to process (without 'r/' prefix)"
     )
+    parser.add_argument(
+        "--max-concurrent-requests",
+        type=int,
+        default=15,
+        help="Maximum concurrent API requests (default: 15)"
+    )
+    parser.add_argument(
+        "--num-top-posts",
+        type=int,
+        default=15,
+        help="Number of top posts to fetch (default: 15)"
+    )
+    parser.add_argument(
+        "--num-comments-per-post",
+        type=int,
+        default=5,
+        help="Number of comments to fetch per post (default: 5)"
+    )
+    parser.add_argument(
+        "--num-replies-per-comment",
+        type=int,
+        default=5,
+        help="Number of replies to fetch per comment (default: 5)"
+    )
     args = parser.parse_args()
     
     start_time = time.time()
-    asyncio.run(main(args.subreddit)) 
+    asyncio.run(main(
+        args.subreddit,
+        args.max_concurrent_requests,
+        args.num_top_posts,
+        args.num_comments_per_post,
+        args.num_replies_per_comment
+    )) 
     end_time = time.time()
     
     print(f"\nTotal execution time: {end_time - start_time:.2f} seconds")
