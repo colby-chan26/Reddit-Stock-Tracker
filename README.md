@@ -37,6 +37,7 @@ Reddit API → Async Scraper → GLiNER → SEC Validator → PostgreSQL
 > - Reddit's servers need to see your real residential IP address
 > - VPNs, proxies, and cloud servers will likely be blocked or rate-limited aggressively
 > - Running from cloud environments (AWS, GCP, Azure, etc.) won't work reliably
+> - **Rate Limit: 100 API calls per 10 minutes** - This is Reddit's limit for unauthenticated requests
 >
 > I tried deploying this with GitHub Actions workflows for automated runs, but GitHub's runner IPs are immediately blocked by Reddit (they are real sticklers about their data). I've included the yaml file if you're interested but
 > without an API key, it'll get blocked.
@@ -46,7 +47,7 @@ Reddit API → Async Scraper → GLiNER → SEC Validator → PostgreSQL
 **Quick Start:**
 
 ```bash
-# Clone 
+# Clone
 git clone https://github.com/colby-chan26/Reddit-Stock-Tracker
 cd Reddit-Stock-Tracker
 
