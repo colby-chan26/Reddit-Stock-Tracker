@@ -8,39 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MAX_CONCURRENT_REQUESTS = 15 
-NUM_TOP_POSTS = 10 
-NUM_COMMENTS_PER_POST = 5
 MAX_RETRIES = 1
-
-async def simulate_api_call(request_description: str) -> Dict[str, Any]:
-    """A placeholder for a single, distinct network request, returning a simulated JSON response."""
-    await asyncio.sleep(0.5) 
-    
-    # Simulate different JSON structures based on the request type
-    if "Post Listing" in request_description:
-        # Simulate initial list of post IDs
-        return {"kind": "Listing", "data": [f"P{i}" for i in range(1, NUM_TOP_POSTS + 1)]}
-    elif "Post" in request_description and "content" in request_description:
-        # Simulate post content retrieval, including comment IDs
-        post_id = int(request_description.split(' ')[1])
-        return {
-            "kind": "Post", 
-            "title": f"The Value Case for Stock {post_id}",
-            "text": f"This is the detailed post content for stock {post_id}. I think it's undervalued.",
-            # Simulate the comment IDs being nested in the response
-            "top_comment_ids": [f"C{i}_{post_id}" for i in range(1, NUM_COMMENTS_PER_POST + 1)]
-        }
-    elif "Comment" in request_description and "Replies" in request_description:
-        # Simulate a full comment thread with replies
-        comment_id = request_description.split(' ')[1]
-        return {
-            "kind": "CommentThread",
-            "body": f"I disagree with the analysis on {comment_id}. The P/E ratio is too high.",
-            "replies": [f"Reply to {comment_id}, point 1", f"Reply to {comment_id}, point 2"]
-        }
-    
-    return {"error": "Unknown request type"}
 
 # --- Fetch Data ---
 
@@ -115,12 +83,10 @@ async def extract_submission_data(submission_json: Dict[str, Any], submission_ty
 
 async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[SubmissionData | None, str, List[str]]:
     try:
-        # Extract the first 5 comment IDs from json[1].data.children[0:5]
+        # Extract comment IDs from json[1].data.children
         comment_ids = []
         comments_data = raw_json[1]["data"]["children"]
-        for i, comment in enumerate(comments_data):
-            if i >= NUM_COMMENTS_PER_POST:
-                break
+        for comment in comments_data:
             comment_id = comment.get("data", {}).get("id")
             if comment_id:
                 comment_ids.append(comment_id)
