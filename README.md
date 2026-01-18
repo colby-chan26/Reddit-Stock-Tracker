@@ -46,8 +46,8 @@ Reddit API → Async Scraper → GLiNER → SEC Validator → PostgreSQL
 **Quick Start:**
 
 ```bash
-# Clone this bad boy
-git clone <your-repo-url>
+# Clone 
+git clone https://github.com/colby-chan26/Reddit-Stock-Tracker
 cd Reddit-Stock-Tracker
 
 # Install dependencies
