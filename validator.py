@@ -1,15 +1,13 @@
 import asyncio
 import aiohttp
 import os
-from fallback import FALLBACK
+import json
 from typing import Set
 from dotenv import load_dotenv
 from gliner import GLiNER
-# import pyperclip
-# import re
-# import json
 
 SEC_URL = "https://www.sec.gov/files/company_tickers.json"
+TICKERS_CACHE_FILE = "tickers_cache.json"
 
 EXCLUSION_LIST = {
     "EDIT", "AI", "WELL", "LOT",
@@ -36,6 +34,8 @@ class SECTickerValidator:
     async def load_tickers(self):
         """
         One-time startup task using aiohttp.
+        Tries to fetch from SEC, saves to JSON cache on success.
+        Falls back to cached JSON, then hardcoded FALLBACK if needed.
         """
         print(f"🏛️  Connecting to SEC.gov...")
         
@@ -52,9 +52,34 @@ class SECTickerValidator:
                         self.valid_tickers.add(ticker)
                         
                     print(f"✅ SEC Data Loaded: {len(self.valid_tickers)} tickers.")
+                    
+                    # Save to JSON cache for future use
+                    try:
+                        with open(TICKERS_CACHE_FILE, 'w') as f:
+                            json.dump(list(self.valid_tickers), f, indent=2)
+                        print(f"💾 Tickers saved to {TICKERS_CACHE_FILE}")
+                    except Exception as save_error:
+                        print(f"⚠️  Warning: Could not save tickers cache: {save_error}")
+                    
+                    return
+                    
             except Exception as e:
                 print(f"❌ Failed to load SEC data: {e}")
-                self.valid_tickers = FALLBACK
+                
+                # Try to load from cached JSON first
+                try:
+                    if os.path.exists(TICKERS_CACHE_FILE):
+                        with open(TICKERS_CACHE_FILE, 'r') as f:
+                            cached_tickers = json.load(f)
+                        self.valid_tickers = set(cached_tickers)
+                        print(f"✅ Loaded {len(self.valid_tickers)} tickers from cache: {TICKERS_CACHE_FILE}")
+                        return
+                except Exception as cache_error:
+                    print(f"⚠️  Could not load from cache: {cache_error}")
+                
+                # Final fallback - use empty set and warn user
+                print(f"❌ CRITICAL: No ticker data available. Please ensure SEC.gov is accessible or cache file exists.")
+                self.valid_tickers = set()
 
     def validate(self, text: str) -> list:
         """
@@ -116,57 +141,3 @@ class SECTickerValidator:
             print(f"⚠️  Error during ticker detection: {e}")
         
         return sorted(list(tickers_found))
-
-# --- Test ---
-test_posts = [
-"""
-Enough of Nebius, Google, Meta, NovoNordisk, Adobe, Fiserv and co.
-Many are great, other can be debated, but there are at least 2 posts a day about them here.
-
-Any stock you are eyeing (or buying) that you rarely hear about and that gets you excited for the futur ? They might not be in the "value investing" zone as of today - keeping a close eye on them for better entry or reinforcement points.
-
-I grew an interest in
-
-Manhattan Associates inc.: The complexity of modern supply chains is increasing, Manhattan Associates is well positioned as a key Warehouse Management Systems. they have little to no debt, and massive switching costs.
-
-maybe a bit more hype, but i also like more and more Investor AB: European Berkshire like family run business that have high conviction on northern EU companies that I myself enjoyed quite a lot analysing before I knew them (Atlas Copco, ABB and so on).
-
-EDIT: Well, that was a popular post. A lot of interesting takes. I must admit I am a bit surprised that, for many, non-hyped or under-radar stocks are mostly hyper growth micro and small-caps.
-
-I wanted to add a few more myself (non-US, sorry): ASSA ABLOY AB, Medacta group SA, RELX, Linde (mentioned), Nemetschek, Hexagon AB, Atlas Copco
-""",
-]
-
-async def main():
-    # 1. Initialize Validator
-    validator = SECTickerValidator()
-    
-    # 2. Load Data (The "One-Time" API Call)
-    await validator.load_tickers()
-    
-    # 3. Copy valid_tickers to clipboard
-    # if CLIPBOARD_AVAILABLE:
-    #     try:
-    #         tickers_json = json.dumps(sorted(list(validator.valid_tickers)), indent=2)
-    #         pyperclip.copy(tickers_json)
-    #         print(f"✅ Copied {len(validator.valid_tickers)} entries to clipboard!")
-    #     except Exception as e:
-    #         print(f"⚠️  Failed to copy to clipboard: {e}")
-    # else:
-    #     print("⚠️  pyperclip not available. Install with: pip install pyperclip")
-    
-    print("-" * 60)
-    print("Testing Ticker Extraction on Social Media Posts")
-    print("-" * 60)
-    
-    # Test posts from various social media scenarios
-    
-    # Test each post
-    for i, post in enumerate(test_posts, 1):
-        valid_found = validator.validate(post)
-        print(f"\n[Post {i}]")
-        print(f"Text: {post[:70]}..." if len(post) > 70 else f"Text: {post}")
-        print(f"Tickers Found: {valid_found if valid_found else 'None'}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
