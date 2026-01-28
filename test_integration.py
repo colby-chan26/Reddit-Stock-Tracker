@@ -72,7 +72,7 @@ async def main():
                             comment_data = await make_api_call(comment_url, session)
                             
                             if comment_data:
-                                comment_submission_data, comment_text, reply_objects = await parse_json_for_comment_content(comment_data)
+                                comment_submission_data, comment_text, reply_objects = await parse_json_for_comment_content(comment_data, first_post_id)
                                 if comment_submission_data:
                                     print(f"✅ Successfully parsed comment content")
                                     print(f"   Author: {comment_submission_data.author}")
@@ -94,7 +94,7 @@ async def main():
                                         print("Test 5: Parsing first reply content")
                                         first_reply = reply_objects[0]
                                         
-                                        reply_submission_data, reply_text = await parse_json_for_reply_content(first_reply)
+                                        reply_submission_data, reply_text = await parse_json_for_reply_content(first_reply, first_post_id)
                                         if reply_submission_data:
                                             print(f"✅ Successfully parsed reply content")
                                             print(f"   Author: {reply_submission_data.author}")

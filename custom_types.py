@@ -9,7 +9,8 @@ class SubmissionType(Enum):
 @dataclass
 class SubmissionData:
     """Data class to store parsed Reddit submission information."""
-    submission_id: str
+    post_id: str  # Parent post ID (same as submission_id for posts)
+    submission_id: str  # This item's own ID
     score: int
     created_utc: int
     author: str

@@ -18,7 +18,7 @@ from stocks_db import StocksDB
 # --- CONCURRENCY PARAMETERS ---
 
 MAX_CONCURRENT_REQUESTS = 15
-NUM_TOP_POSTS = 15
+NUM_TOP_POSTS = 12
 NUM_COMMENTS_PER_POST = 5
 NUM_REPLIES_PER_COMMENT = 5
 
@@ -100,7 +100,7 @@ class RedditStockTracker:
                 return []
         
         # --- Part 2: Parse comment and extract replies ---
-        comment_submission_data, comment_text, reply_objects = await parse_json_for_comment_content(raw_thread_json)
+        comment_submission_data, comment_text, reply_objects = await parse_json_for_comment_content(raw_thread_json, post_id)
         
         if comment_submission_data and comment_text:
             # --- Part 3: Extract tickers and insert into DB ---
@@ -108,16 +108,17 @@ class RedditStockTracker:
             if tickers:
                 self.db.insert(tickers, comment_submission_data)
         
-        return reply_objects
+        return [(reply, post_id) for reply in reply_objects]  # Return tuples with post_id
     
-    async def fetch_reply_data(self, reply: dict) -> None:
+    async def fetch_reply_data(self, reply: dict, post_id: str) -> None:
         """Step 3b: Processes a single reply object.
         
         Args:
             reply: Reply object extracted from the API response
+            post_id: ID of the parent post
         """
         # --- Parse the individual reply ---
-        reply_submission_data, reply_text = await parse_json_for_reply_content(reply)
+        reply_submission_data, reply_text = await parse_json_for_reply_content(reply, post_id)
         
         if reply_submission_data and reply_text:
             # --- Extract tickers and insert into DB ---
@@ -193,8 +194,8 @@ class RedditStockTracker:
         # Process comment results and prepare individual reply tasks
         reply_tasks = []
         for replies_list in comment_results:
-            for reply in replies_list:
-                task = self.fetch_reply_data(reply)
+            for reply, post_id in replies_list:  # Unpack tuple with post_id
+                task = self.fetch_reply_data(reply, post_id)
                 reply_tasks.append(task)
         
         # Execute all reply processing tasks concurrently

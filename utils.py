@@ -62,16 +62,23 @@ async def parse_json_for_post_ids(raw_json: Dict[str, Any]) -> List[str]:
     print(post_ids)
     return post_ids
 
-async def extract_submission_data(submission_json: Dict[str, Any], submission_type: SubmissionType) -> Tuple[str, SubmissionData]:
+async def extract_submission_data(submission_json: Dict[str, Any], submission_type: SubmissionType, post_id: str = None) -> Tuple[str, SubmissionData]:
     # Extract the main text content for ticker extraction
     # For posts: use selftext, fall back to body for comments/replies
     text = submission_json.get('selftext', '').strip() or submission_json.get('body', '').strip()
     title = submission_json.get('title', '') or ''
     post_text_and_title = text + title
     
+    # Get this item's own ID
+    submission_id = submission_json.get("id", "")
+    
+    # For posts, use own ID as post_id; for comments/replies, use the provided parent post_id
+    resolved_post_id = post_id if post_id else submission_id
+    
     # Extract metadata from the post
     submission_data = SubmissionData(
-        submission_id=submission_json.get("id", ""),
+        post_id=resolved_post_id,
+        submission_id=submission_id,
         score=submission_json.get("score", 0),
         created_utc=submission_json.get("created_utc", 0),
         author=submission_json.get("author", "Unknown"),
@@ -104,7 +111,7 @@ async def parse_json_for_post_content(raw_json: List[Dict[str, Any]]) -> Tuple[S
         print(f"❌ Error parsing post content: {e}")
         return None, "", []
 
-async def parse_json_for_comment_content(raw_json: List[Dict[str, Any]]) -> Tuple[SubmissionData | None, str, List]:
+async def parse_json_for_comment_content(raw_json: List[Dict[str, Any]], post_id: str) -> Tuple[SubmissionData | None, str, List]:
     try:
         # Extract comment data from json[1].data.children[0].data
         comment_data = raw_json[1]["data"]["children"][0]["data"]
@@ -116,8 +123,8 @@ async def parse_json_for_comment_content(raw_json: List[Dict[str, Any]]) -> Tupl
             replies_children = replies_structure.get("data", {}).get("children", [])
             reply_objects.extend(replies_children)
         
-        # Extract submission data using helper function
-        comment_text_and_title, submission_data = await extract_submission_data(comment_data, SubmissionType.COMMENT)
+        # Extract submission data using helper function with parent post_id
+        comment_text_and_title, submission_data = await extract_submission_data(comment_data, SubmissionType.COMMENT, post_id)
         
         print(f"  💡 Parsed Comment JSON: {submission_data.author} | Score: {submission_data.score} | {len(reply_objects)} replies.")
         return submission_data, comment_text_and_title, reply_objects
@@ -126,15 +133,15 @@ async def parse_json_for_comment_content(raw_json: List[Dict[str, Any]]) -> Tupl
         print(f"❌ Error parsing comment content: {e}")
         return None, "", []
 
-async def parse_json_for_reply_content(raw_json: Dict[str, Any]) -> Tuple[SubmissionData | None, str]:
+async def parse_json_for_reply_content(raw_json: Dict[str, Any], post_id: str) -> Tuple[SubmissionData | None, str]:
     """Parses the JSON response for a single reply, extracting reply data and text."""
     
     try:
         # Extract reply data from the raw_json
         reply_data = raw_json.get("data", raw_json)
         
-        # Extract submission data using helper function
-        reply_text, submission_data = await extract_submission_data(reply_data, SubmissionType.REPLY)
+        # Extract submission data using helper function with parent post_id
+        reply_text, submission_data = await extract_submission_data(reply_data, SubmissionType.REPLY, post_id)
         
         print(f"  💡 Parsed Reply JSON: {submission_data.author} | Score: {submission_data.score}")
         return submission_data, reply_text

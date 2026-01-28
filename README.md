@@ -105,12 +105,18 @@ uv run ./reddit_stocks.py investing \
 Every mention creates a database record with:
 
 - `ticker`: The stock symbol (e.g., AAPL, TSLA)
-- `submission_id`: Reddit's unique ID for the post/comment
+- `post_id`: The parent post's Reddit ID (used to construct the URL)
+- `submission_id`: This item's own Reddit ID (post, comment, or reply)
 - `author`: The Reddit username
 - `subreddit`: Where it was posted
 - `score`: Upvotes (or downvotes)
 - `type`: POST, COMMENT, or REPLY
 - `created_utc`: When it was posted (with timezone)
+
+**URL Reconstruction:**
+
+- Posts: `reddit.com/r/{subreddit}/comments/{post_id}/`
+- Comments/Replies: `reddit.com/r/{subreddit}/comments/{post_id}/comment/{submission_id}`
 
 ## 🎯 How It Works Under The Hood
 
